@@ -67,15 +67,15 @@ volatile unsigned int counter = 0;
 volatile int centisecond = 0;
 Calendar currentTime;
 
-// TimerA0 UpMode Configuration Parameter
-Timer_A_initUpModeParam initUpParam_A0 =
+// TimerB0 UpMode Configuration Parameter
+Timer_B_initUpModeParam initUpParam_B0 =
 {
-        TIMER_A_CLOCKSOURCE_SMCLK,              // SMCLK Clock Source
-        TIMER_A_CLOCKSOURCE_DIVIDER_1,          // SMCLK/4 = 2MHz
+        TIMER_B_CLOCKSOURCE_SMCLK,              // SMCLK Clock Source
+        TIMER_B_CLOCKSOURCE_DIVIDER_1,          // SMCLK/4 = 2MHz
         30000,                                  // 15ms debounce period
-        TIMER_A_TAIE_INTERRUPT_DISABLE,         // Disable Timer interrupt
-        TIMER_A_CCIE_CCR0_INTERRUPT_ENABLE ,    // Enable CCR0 interrupt
-        TIMER_A_DO_CLEAR,                       // Clear value
+        TIMER_B_TBIE_INTERRUPT_DISABLE,         // Disable Timer interrupt
+        TIMER_B_CCIE_CCR0_INTERRUPT_ENABLE ,    // Enable CCR0 interrupt
+        TIMER_B_DO_CLEAR,                       // Clear value
         true                                    // Start Timer
 };
 
@@ -259,7 +259,7 @@ __interrupt void PORT1_ISR(void)
                 }
 
                 // Start debounce timer
-                Timer_A_initUpMode(TIMER_A0_BASE, &initUpParam_A0);
+                Timer_B_initUpMode(TIMER_B0_BASE, &initUpParam_B0);
             }
             break;
         case P1IV_P1IFG2 :    // Button S2 pressed
@@ -277,7 +277,7 @@ __interrupt void PORT1_ISR(void)
                 }
 
                 // Start debounce timer
-                Timer_A_initUpMode(TIMER_A0_BASE, &initUpParam_A0);
+                Timer_B_initUpMode(TIMER_B0_BASE, &initUpParam_B0);
             }
             break;
         case P1IV_P1IFG3 : break;
@@ -289,11 +289,11 @@ __interrupt void PORT1_ISR(void)
 }
 
 /*
- * Timer A0 Interrupt Service Routine
+ * Timer B0 Interrupt Service Routine
  * Used as button debounce timer
  */
-#pragma vector = TIMER0_A0_VECTOR
-__interrupt void TIMER0_A0_ISR (void)
+#pragma vector = TIMER0_B0_VECTOR
+__interrupt void TIMER0_B0_ISR (void)
 {
     // Both button S1 & S2 held down
     if (!(P1IN & BIT1) && !(P1IN & BIT2))
@@ -302,7 +302,7 @@ __interrupt void TIMER0_A0_ISR (void)
         if (holdCount == 40)
         {
             // Stop Timer A0
-            Timer_A_stop(TIMER_A0_BASE);
+            Timer_B_stop(TIMER_B0_BASE);
 
             // Change mode
 
@@ -328,7 +328,7 @@ __interrupt void TIMER0_A0_ISR (void)
     if ((P1IN & BIT1) && (P1IN & BIT2))
     {
         // Stop timer A0
-        Timer_A_stop(TIMER_A0_BASE);
+        Timer_A_stop(TIMER_B0_BASE);
     }
 
     if (mode == TAOS_MODE)
@@ -389,3 +389,5 @@ __interrupt void ADC12_ISR(void)
     default: break;
     }
 }
+
+
