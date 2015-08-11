@@ -56,6 +56,7 @@
 #include "stdio.h"
 
 #define STARTUP_MODE         0
+#define SPRINTF_BUFFER_SIZE  20
 
 volatile unsigned char mode = TAOS_MODE;
 volatile unsigned char stopWatchRunning = 0;
@@ -63,25 +64,61 @@ volatile unsigned char tempSensorRunning = 0;
 volatile unsigned char S1buttonDebounce = 0;
 volatile unsigned char S2buttonDebounce = 0;
 volatile unsigned int holdCount = 0;
-volatile unsigned int counter = 0;
+volatile unsigned int rtc_counter = 0;
 volatile int centisecond = 0;
 Calendar currentTime;
 
-// TimerB0 UpMode Configuration Parameter
-Timer_B_initUpModeParam initUpParam_B0 =
+char sprintf_buffer[SPRINTF_BUFFER_SIZE];
+
+volatile unsigned int ccrvalue;
+volatile unsigned long prevccr; // Previous value of the capture register
+volatile unsigned long counter;
+//unsigned char bcd[8];
+//unsigned char pps1;
+//char pps1_count; // last DP blink - On intervall
+volatile unsigned long freq;
+volatile unsigned char update_display=0;
+volatile unsigned char value_ready=0;
+volatile unsigned long freq_array[10];
+
+
+
+// TimerA0 UpMode Configuration Parameter
+Timer_A_initUpModeParam initUpParam_A0 =
 {
-        TIMER_B_CLOCKSOURCE_SMCLK,              // SMCLK Clock Source
-        TIMER_B_CLOCKSOURCE_DIVIDER_1,          // SMCLK/4 = 2MHz
+        TIMER_A_CLOCKSOURCE_SMCLK,              // SMCLK Clock Source
+        TIMER_A_CLOCKSOURCE_DIVIDER_1,          // SMCLK/4 = 2MHz
         30000,                                  // 15ms debounce period
-        TIMER_B_TBIE_INTERRUPT_DISABLE,         // Disable Timer interrupt
-        TIMER_B_CCIE_CCR0_INTERRUPT_ENABLE ,    // Enable CCR0 interrupt
-        TIMER_B_DO_CLEAR,                       // Clear value
+        TIMER_A_TAIE_INTERRUPT_DISABLE,         // Disable Timer interrupt
+		TIMER_A_CCIE_CCR0_INTERRUPT_ENABLE ,    // Enable CCR0 interrupt
+        TIMER_A_DO_CLEAR,                       // Clear value
         true                                    // Start Timer
+};
+
+
+// TimerA1 UpMode Configuration Parameter
+Timer_A_initContinuousModeParam initContinuousParam_A1 =
+{
+		TIMER_A_CLOCKSOURCE_SMCLK,
+		TIMER_A_CLOCKSOURCE_DIVIDER_1,
+		TIMER_A_TAIE_INTERRUPT_ENABLE,
+		TIMER_A_SKIP_CLEAR,
+		false
+};
+Timer_A_initCaptureModeParam initCaptureParam_A1_2 =
+{
+		TIMER_A_CAPTURECOMPARE_REGISTER_2,
+		TIMER_A_CAPTUREMODE_RISING_EDGE,
+		TIMER_A_CAPTURE_INPUTSELECT_CCIxA,
+		TIMER_A_CAPTURE_SYNCHRONOUS,
+		TIMER_A_CAPTURECOMPARE_INTERRUPT_DISABLE,
+		TIMER_A_OUTPUTMODE_OUTBITVALUE
 };
 
 // Initialization calls
 void Init_GPIO(void);
 void Init_Clock(void);
+void Init_Timer(void);
 
 
 /*
@@ -102,6 +139,7 @@ int main(void) {
     Init_GPIO();
     Init_Clock();
     Init_LCD();
+    Init_Timer();
 
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN1);
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN2);
@@ -112,17 +150,56 @@ int main(void) {
     displayScrollText(welcome_message);
     puts(welcome_message);
 
+    
     while(1)
     {
-        LCD_C_selectDisplayMemory(LCD_C_BASE, LCD_C_DISPLAYSOURCE_MEMORY);
-        switch(mode)
-        {
-        case TAOS_MODE:
-        	clearLCD();              // Clear all LCD segments
-        	taos_mode_init();    // initialize taos mode
-        	taos_mode();
-        	break;
-        }
+    	if(update_display)
+    	{
+    		Timer_A_enableInterrupt(TIMER_A1_BASE);
+    		Timer_A_enableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+    		Timer_A_startCounter(TIMER_A1_BASE,TIMER_A_CONTINUOUS_MODE);
+
+    		while(value_ready<10)
+    		{
+    		}
+
+    		unsigned long avg = ((counter+ freq_array[9]) - freq_array[1])>>3;
+
+    		sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
+    		puts(sprintf_buffer);
+
+    		int i;
+    		int j=0;
+			int pos_map[]={pos1,pos2,pos3,pos4,pos5,pos6};
+			clearLCD();
+			for(i=0;i<6;i++)
+			{
+				if(sprintf_buffer[j]=='.')
+				{
+					LCDMEM[pos_map[i-1]+1] |= 0x01;
+					j++;
+				}
+				showChar(sprintf_buffer[j],pos_map[i]);
+				j++;
+			}
+
+    		update_display=0;
+
+    		Timer_A_stop(TIMER_A1_BASE);
+    		Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+    		counter=0;
+    		value_ready=0;
+    	}
+
+//        LCD_C_selectDisplayMemory(LCD_C_BASE, LCD_C_DISPLAYSOURCE_MEMORY);
+//        switch(mode)
+//        {
+//        case TAOS_MODE:
+//        	clearLCD();              // Clear all LCD segments
+//        	taos_mode_init();    // initialize taos mode
+//        	taos_mode();
+//        	break;
+//        }
     }
 }
 
@@ -154,6 +231,12 @@ void Init_GPIO()
     GPIO_setAsOutputPin(GPIO_PORT_P9, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6|GPIO_PIN7);
 
     GPIO_setAsInputPin(GPIO_PORT_P3, GPIO_PIN5);
+    GPIO_setAsInputPin(GPIO_PORT_P1, GPIO_PIN3);//AJS
+    GPIO_setAsPeripheralModuleFunctionInputPin(
+    		GPIO_PORT_P1,
+			GPIO_PIN3,
+			GPIO_PRIMARY_MODULE_FUNCTION
+			);
 
     // Configure button S1 (P1.1) interrupt
     GPIO_selectInterruptEdge(GPIO_PORT_P1, GPIO_PIN1, GPIO_HIGH_TO_LOW_TRANSITION);
@@ -187,12 +270,24 @@ void Init_Clock()
     // Set DCO frequency to default 8MHz
     CS_setDCOFreq(CS_DCORSEL_0, CS_DCOFSEL_6);
 
-    // Configure MCLK and SMCLK to default 2MHz
-    CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_8);
-    CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_8);
+    // Configure MCLK and SMCLK to 8MHz
+    CS_initClockSignal(CS_MCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
+    CS_initClockSignal(CS_SMCLK, CS_DCOCLK_SELECT, CS_CLOCK_DIVIDER_1);
 
     // Intializes the XT1 crystal oscillator
     CS_turnOnLFXT(CS_LFXT_DRIVE_3);
+}
+
+/*
+ * Timer Initialization
+ */
+void Init_Timer(void)
+{
+	Timer_A_initCaptureMode(TIMER_A1_BASE,&initCaptureParam_A1_2);
+	Timer_A_initContinuousMode(TIMER_A1_BASE,&initContinuousParam_A1);
+	//Timer_A_enableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+	//Timer_A_startCounter(TIMER_A1_BASE,TIMER_A_CONTINUOUS_MODE);
+	
 }
 
 /*
@@ -212,7 +307,7 @@ void RTC_ISR(void)
     case RTCIV_NONE: break;      //No interrupts
     case RTCIV_RTCOFIFG: break;      //RTCOFIFG
     case RTCIV_RTCRDYIFG:             //RTCRDYIFG
-        counter = RTCPS;
+        rtc_counter = RTCPS;
         centisecond = 0;
         __bic_SR_register_on_exit(LPM3_bits);
         break;
@@ -224,7 +319,7 @@ void RTC_ISR(void)
         __no_operation();
         break;
     case RTCIV_RT0PSIFG:
-        centisecond = RTCPS - counter;
+        centisecond = RTCPS - rtc_counter;
         __bic_SR_register_on_exit(LPM3_bits);
         break;     //RT0PSIFG
     case RTCIV_RT1PSIFG:
@@ -256,10 +351,11 @@ __interrupt void PORT1_ISR(void)
                 if (mode == TAOS_MODE)
                 {
                 	decrement_well();
+                	update_display=1;
                 }
 
                 // Start debounce timer
-                Timer_B_initUpMode(TIMER_B0_BASE, &initUpParam_B0);
+                Timer_A_initUpMode(TIMER_A0_BASE, &initUpParam_A0);
             }
             break;
         case P1IV_P1IFG2 :    // Button S2 pressed
@@ -277,7 +373,7 @@ __interrupt void PORT1_ISR(void)
                 }
 
                 // Start debounce timer
-                Timer_B_initUpMode(TIMER_B0_BASE, &initUpParam_B0);
+                Timer_A_initUpMode(TIMER_A0_BASE, &initUpParam_A0);
             }
             break;
         case P1IV_P1IFG3 : break;
@@ -289,11 +385,11 @@ __interrupt void PORT1_ISR(void)
 }
 
 /*
- * Timer B0 Interrupt Service Routine
+ * Timer A0 Interrupt Service Routine
  * Used as button debounce timer
  */
-#pragma vector = TIMER0_B0_VECTOR
-__interrupt void TIMER0_B0_ISR (void)
+#pragma vector = TIMER0_A0_VECTOR
+__interrupt void TIMER0_A0_ISR (void)
 {
     // Both button S1 & S2 held down
     if (!(P1IN & BIT1) && !(P1IN & BIT2))
@@ -302,7 +398,7 @@ __interrupt void TIMER0_B0_ISR (void)
         if (holdCount == 40)
         {
             // Stop Timer A0
-            Timer_B_stop(TIMER_B0_BASE);
+            Timer_A_stop(TIMER_A0_BASE);
 
             // Change mode
 
@@ -328,7 +424,7 @@ __interrupt void TIMER0_B0_ISR (void)
     if ((P1IN & BIT1) && (P1IN & BIT2))
     {
         // Stop timer A0
-        Timer_A_stop(TIMER_B0_BASE);
+        Timer_A_stop(TIMER_A0_BASE);
     }
 
     if (mode == TAOS_MODE)
@@ -390,4 +486,65 @@ __interrupt void ADC12_ISR(void)
     }
 }
 
+// Timer capture interrupt
+#pragma vector=TIMER1_A0_VECTOR
+__interrupt void TACCR1_ISR(void)
+{
 
+}
+
+// Timer_A3 Interrupt Vector (TA0IV) handler
+#pragma vector=TIMER1_A1_VECTOR
+__interrupt void TA0IV_ISR(void)
+{
+	unsigned char TA1IV_save = TA1IV;
+
+	if(TA1IV_save == 0x04)
+//	if(TA1IV==0x04)
+	{
+#if(0)
+		// The execution of the overflow interrupt blocked from here
+
+		// store the actual value of the counter
+		freq = counter;
+		// clear master counter
+		counter = 0;
+		// Clear interrupt
+		// The execution of the overflow interrupt allowed from here
+		//AJS TA1CCTL2 &= ~CCIFG;
+
+		// get the capture data
+		ccrvalue = TA1CCR2;
+
+		// process data
+		//
+		//          || <--------------------------------------------------- freq ------------------------------------------------> ||
+		//  prevccr || 0x10000 - prevccr | 0x10000 overflow | 0x10000 overflow | ..... | 0x10000 overflow | 0x10000 overflow | ccr ||
+		freq += ccrvalue - prevccr;
+		// store current ccr for the next count
+		prevccr = ccrvalue;
+#endif
+		freq_array[value_ready]=TA1CCR2;
+		value_ready++;
+		if (value_ready==10)
+		{
+			Timer_A_stop(TIMER_A1_BASE);
+			Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+			Timer_A_disableInterrupt(TIMER_A1_BASE);
+			Timer_A_clear(TIMER_A1_BASE);
+		}
+
+		//LongToBCD(8,bcd,freq,0);
+//		pps1 = 0x80; // switch on the last DP
+//		pps1_count = 100; // Keep Last DP on for 100 display cicles
+	}
+
+	// after the counter overflow increment the counter with 65536
+	//if(Timer_A_getCaptureCompareInterruptStatus(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2,TIMER_A_CAPTURE_OVERFLOW))
+	if(TA1IV_save == 0x0E)
+//	if(TA1IV==0x0E)
+	{
+		counter += 0x10000;
+		P1OUT ^= 0x01;
+	}
+}
