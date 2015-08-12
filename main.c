@@ -115,6 +115,15 @@ Timer_A_initCaptureModeParam initCaptureParam_A1_2 =
 		TIMER_A_OUTPUTMODE_OUTBITVALUE
 };
 
+Timer_A_initContinuousModeParam initContinuousParam_A2 =
+{
+		TIMER_A_CLOCKSOURCE_SMCLK,
+		TIMER_A_CLOCKSOURCE_DIVIDER_64,
+		TIMER_A_TAIE_INTERRUPT_ENABLE,
+		TIMER_A_SKIP_CLEAR,
+		true
+};
+
 // Initialization calls
 void Init_GPIO(void);
 void Init_Clock(void);
@@ -150,6 +159,7 @@ int main(void) {
     displayScrollText(welcome_message);
     puts(welcome_message);
 
+    Timer_A_initContinuousMode(TIMER_A2_BASE,&initContinuousParam_A2);
     
     while(1)
     {
@@ -544,7 +554,17 @@ __interrupt void TA0IV_ISR(void)
 	if(TA1IV_save == 0x0E)
 //	if(TA1IV==0x0E)
 	{
-		counter += 0x10000;
-		P1OUT ^= 0x01;
+		if(value_ready>1){
+			counter += 0x10000;
+		}
+	}
+}
+
+#pragma vector=TIMER2_A1_VECTOR
+__interrupt void TIMER2_A0_ISR (void)
+{
+	if(TA2IV== 0x0E)
+	{
+		update_display=1;
 	}
 }
