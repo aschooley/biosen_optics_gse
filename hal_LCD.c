@@ -164,7 +164,7 @@ void displayScrollText(char *msg)
         showChar(buffer[4], pos5);
         showChar(buffer[5], pos6);
 
-        __delay_cycles(200000);
+        __delay_cycles(1000000);
     }
 }
 

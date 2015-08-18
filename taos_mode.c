@@ -64,7 +64,12 @@ void update_screen(void)
 	showChar(well_lookup_table[g.well_index][1],pos2);
 	showChar(well_lookup_table[g.well_index][2],pos3);
 
-	puts(well_lookup_table[g.well_index]);
+	//puts(well_lookup_table[g.well_index]);
 
 	g.update_screen=0;
+}
+
+char * translate_well_index(unsigned char index);
+{
+	return (&well_lookup_table[index])
 }

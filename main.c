@@ -54,6 +54,7 @@
 #include "taos_mode.h"
 #include "hal_LCD.h"
 #include "stdio.h"
+#include "string.h"
 
 #define STARTUP_MODE         0
 #define SPRINTF_BUFFER_SIZE  20
@@ -128,7 +129,72 @@ Timer_A_initContinuousModeParam initContinuousParam_A2 =
 void Init_GPIO(void);
 void Init_Clock(void);
 void Init_Timer(void);
+void init_uart(void);
 
+#if 0
+/**
+ * puts() is used by printf() to display or send a string.. This function
+ *     determines where printf prints to. For this case it sends a string
+ *     out over UART, another option could be to display the string on an
+ *     LCD display.
+ **/
+void puts(char *s) {
+	char c;
+
+	// Loops through each character in string 's'
+	while (c = *s++) {
+		sendByte(c);
+	}
+}
+/**
+ * puts() is used by printf() to display or send a character. This function
+ *     determines where printf prints to. For this case it sends a character
+ *     out over UART.
+ **/
+void putc(unsigned b) {
+	sendByte(b);
+}
+/**
+ * Sends a single byte out through UART
+ **/
+void sendByte(unsigned char byte )
+{
+	EUSCI_A_UART_transmitData(EUSCI_A0_BASE,byte);
+}
+#endif
+int fputc(int _c, register FILE *_fp);
+int fputs(const char *_ptr, register FILE *_fp);
+
+int fputc(int _c, register FILE *_fp)
+{
+	// Wait for peripherial to be available
+	while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A1_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
+	// Stuff byte into tx reg
+	EUSCI_A_UART_transmitData(EUSCI_A1_BASE,_c);//UCA1TXBUF = (unsigned char) _c;
+	// Return tx'd byte, for giggles I suppose
+	return((unsigned char)_c);
+}
+
+int fputs(const char *_ptr, register FILE *_fp)
+{
+	// Vars to iterate over the string
+	uint16_t i, len;
+
+	// Get the length of the string
+	len = strlen(_ptr);
+
+	// Loop over each byte of the string
+	for(i=0 ; i<len ; i++)
+	{
+		// Wait for the peripherial to be available
+		while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A1_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
+		// Stuff byte into the tx reg
+		EUSCI_A_UART_transmitData(EUSCI_A1_BASE,_ptr[i]);//UCA1TXBUF = (unsigned char) _ptr[i];
+	}
+
+	// Return the number of bytes sent
+	return len;
+}
 
 /*
  * Main routine
@@ -149,6 +215,7 @@ int main(void) {
     Init_Clock();
     Init_LCD();
     Init_Timer();
+    init_uart();
 
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN1);
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN2);
@@ -157,7 +224,7 @@ int main(void) {
 
     static const char* const welcome_message = "BIOSENTINEL OPTICS GSE V01";
     displayScrollText(welcome_message);
-    puts(welcome_message);
+//    puts(welcome_message);
 
     Timer_A_initContinuousMode(TIMER_A2_BASE,&initContinuousParam_A2);
     
@@ -176,7 +243,8 @@ int main(void) {
     		unsigned long avg = ((counter+ freq_array[9]) - freq_array[1])>>3;
 
     		sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
-    		puts(sprintf_buffer);
+//    		puts(sprintf_buffer);
+    		printf("%s\r\n",sprintf_buffer);
 
     		int i;
     		int j=0;
@@ -298,6 +366,98 @@ void Init_Timer(void)
 	//Timer_A_enableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
 	//Timer_A_startCounter(TIMER_A1_BASE,TIMER_A_CONTINUOUS_MODE);
 	
+}
+
+/*
+ * UART Initialization
+ */
+void init_uart(void)
+{
+
+
+	EUSCI_A_UART_initParam uart_a1_param={
+			EUSCI_A_UART_CLOCKSOURCE_ACLK,
+			3,
+			0,
+			146,
+			EUSCI_A_UART_NO_PARITY,
+			EUSCI_A_UART_LSB_FIRST,
+			EUSCI_A_UART_ONE_STOP_BIT,
+			EUSCI_A_UART_MODE,
+			EUSCI_A_UART_LOW_FREQUENCY_BAUDRATE_GENERATION
+	};
+
+	GPIO_setAsInputPin(GPIO_PORT_P3, GPIO_PIN5);//AJS
+	GPIO_setOutputHighOnPin(GPIO_PORT_P3,GPIO_PIN4);
+	GPIO_setAsOutputPin(GPIO_PORT_P3,GPIO_PIN4);
+
+	GPIO_setAsPeripheralModuleFunctionInputPin(
+			GPIO_PORT_P3,
+			GPIO_PIN5,
+			GPIO_PRIMARY_MODULE_FUNCTION
+			);
+	GPIO_setAsPeripheralModuleFunctionOutputPin(
+			GPIO_PORT_P3,
+			GPIO_PIN4,
+			GPIO_PRIMARY_MODULE_FUNCTION
+			);
+
+	EUSCI_A_UART_init(EUSCI_A1_BASE,&uart_a1_param);
+	EUSCI_A_UART_enable(EUSCI_A1_BASE);
+#if 0
+    EUSCI_A_UART_initParam uart_a0_param={
+		EUSCI_A_UART_CLOCKSOURCE_SMCLK,
+		4,
+		5,
+		85,
+		EUSCI_A_UART_NO_PARITY,
+		EUSCI_A_UART_MSB_FIRST,
+		EUSCI_A_UART_ONE_STOP_BIT,
+		EUSCI_A_UART_MODE,
+		EUSCI_A_UART_OVERSAMPLING_BAUDRATE_GENERATION
+    };
+
+	GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN3);//AJS
+	GPIO_setOutputHighOnPin(GPIO_PORT_P4,GPIO_PIN2);
+	GPIO_setAsOutputPin(GPIO_PORT_P4,GPIO_PIN2);
+
+		GPIO_setAsPeripheralModuleFunctionInputPin(
+				GPIO_PORT_P4,
+				GPIO_PIN3,
+				GPIO_PRIMARY_MODULE_FUNCTION
+				);
+		GPIO_setAsPeripheralModuleFunctionOutputPin(
+				GPIO_PORT_P4,
+				GPIO_PIN2,
+				GPIO_PRIMARY_MODULE_FUNCTION
+				);
+
+	EUSCI_A_UART_init(EUSCI_A0_BASE,&uart_a0_param);
+	EUSCI_A_UART_enable(EUSCI_A0_BASE);
+#endif
+
+#if 0
+	    // Configure USCI_A0 for UART mode
+		// Put eUSCI in reset
+		UCA1CTLW0 = UCSWRST;
+		// CLK = SMCLK
+		UCA1CTLW0 |= UCSSEL__SMCLK;
+		// Baud Rate calculation
+		// 8000000/(16*9600) = 52.083
+		// Fractional portion = 0.083
+		// User's Guide Table 21-4: UCBRSx = 0x04
+		// UCBRFx = int ( (52.083-52)*16) = 1
+		// 8000000/16/9600
+		UCA1BR0 = 52;
+		UCA1BR1 = 0x00;
+		UCA1MCTLW |= UCOS16 | UCBRF_1;
+		// Initialize eUSCI
+		UCA1CTLW0 &= ~UCSWRST;
+		// Enable USCI_A1 RX interrupt
+		UCA1IE |= UCRXIE;
+
+#endif
+
 }
 
 /*

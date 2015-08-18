@@ -46,6 +46,7 @@ void increment_well(void);
 void decrement_well(void);
 void taos_mode_init(void);
 void taos_mode(void);
+char * translate_well_index(unsigned char index);
 
 
 
