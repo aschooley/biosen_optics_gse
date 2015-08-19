@@ -138,14 +138,11 @@ void Init_LCD()
 void displayScrollText(char *msg)
 {
     int length = strlen(msg);
-    int oldmode = mode;
     int i;
     int s = 5;
     char buffer[6] = "      ";
     for (i=0; i<length+7; i++)
     {
-        if (mode != oldmode)
-            break;
         int t;
         for (t=0; t<6; t++)
             buffer[t] = ' ';

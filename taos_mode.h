@@ -12,7 +12,7 @@
 #ifndef TAOS_MODE_H_
 #define TAOS_MODE_H_
 
-#define TAOS_MODE        3
+#include "stdbool.h"
 
 /*extern volatile unsigned char mode;
 extern volatile unsigned char S1buttonDebounce;
@@ -23,8 +23,8 @@ extern Calendar currentTime;
 extern volatile unsigned int counter;
 extern volatile int centisecond;*/
 
-static const unsigned char max_well_number=64;
-static const char * const well_lookup_table[]=
+static const unsigned char taos_max_well_number=64;
+static char const * const taos_well_lookup_table[]=
 {"1R ","1G ","1B ","1X ",
 "2R ","2G ","2B ","2X ",
 "3R ","3G ","3B ","3X ",
@@ -42,11 +42,13 @@ static const char * const well_lookup_table[]=
 "15R","15G","15B","15X",
 "16R","16G","16B","16X"};
 
-void increment_well(void);
-void decrement_well(void);
+void taos_increment_well(void);
+void taos_decrement_well(void);
+unsigned char taos_get_current_well(void);
+bool taos_set_current_well(unsigned char index);
 void taos_mode_init(void);
 void taos_mode(void);
-char * translate_well_index(unsigned char index);
+char *  taos_translate_well_index(unsigned char index);
 
 
 

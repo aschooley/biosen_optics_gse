@@ -13,63 +13,56 @@
 #include <driverlib.h>
 #include "taos_mode.h"
 #include "hal_LCD.h"
-struct
+#include "stdbool.h"
+
+static struct
 {
-	volatile unsigned char update_screen;
 	volatile unsigned char well_index;
 }g={0,0};
 
 static void update_screen(void);
 
 
-void increment_well(void){
+void taos_increment_well(void){
 	g.well_index++;
-	g.well_index %= max_well_number;
-
-	g.update_screen=1;
-
+	g.well_index %= taos_max_well_number;
 	return;
 }
-void decrement_well(void){
+void taosdecrement_well(void){
 	g.well_index--;
-	g.well_index %= max_well_number;
-
-	g.update_screen=1;
-
+	g.well_index %= taos_max_well_number;
 	return;
+}
+
+
+unsigned char taos_get_current_well(void)
+{
+	return g.well_index;
+}
+
+bool taos_set_current_well(unsigned char index)
+{
+	bool success = false;
+
+	if(0 <= index && taos_max_well_number > index)
+	{
+		g.well_index = index;
+		success = true;
+	}
+
+	return success;
+
 }
 
 void taos_mode_init(void){
-	update_screen();
 	return;
 }
 void taos_mode(void){
 
-	while(mode == TAOS_MODE)
-	{
-		if(	g.update_screen==1)
-		{
-			update_screen();
-		}
-
-	}
 	return;
 }
 
-void update_screen(void)
+char * taos_translate_well_index(unsigned char index)
 {
-	clearLCD();
-
-	showChar(well_lookup_table[g.well_index][0],pos1);
-	showChar(well_lookup_table[g.well_index][1],pos2);
-	showChar(well_lookup_table[g.well_index][2],pos3);
-
-	//puts(well_lookup_table[g.well_index]);
-
-	g.update_screen=0;
-}
-
-char * translate_well_index(unsigned char index);
-{
-	return (&well_lookup_table[index])
+	return ((char *)taos_well_lookup_table[index]);
 }
