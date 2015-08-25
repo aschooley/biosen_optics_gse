@@ -59,6 +59,7 @@
 
 #define DEFAULT_MODE        0
 #define SPRINTF_BUFFER_SIZE  20
+static const unsigned char SAMPLE_PERIOD_MINUTES = 15;
 
 typedef struct{
 	bool debounce_b1;
@@ -67,26 +68,20 @@ typedef struct{
 }debounce_t;
 
 typedef struct{
-	unsigned int counter;
-	int centisecond;
-	Calendar time;
-}rtc_t;
-
-typedef struct{
 	unsigned int overflow;
 	unsigned char freq_array_index;
-	unsigned int freq_array[10];
+	unsigned int freq_array[20];
 }timer_t;
 
 static struct {
 	volatile bool running;
 	volatile unsigned char mode;
 	volatile debounce_t buttons;
-	volatile rtc_t current_time;
-	volatile rtc_t last_sample_time;
 	volatile timer_t timer;
 	volatile bool update_display;
-}g={false,DEFAULT_MODE,{false,false,0},{0,0,},{0,0,},{0,false,{}},false};
+	volatile unsigned char minute_counter;
+	volatile bool abort;
+}g={false,DEFAULT_MODE,{false,false,0},{0,false,{}},false,0,false};
 
 
 char sprintf_buffer[SPRINTF_BUFFER_SIZE];
@@ -143,25 +138,10 @@ int fputs(const char *_ptr, register FILE *_fp);
 
 void print_to_lcd( char string[]);
 
-void reset_rtc_timer(void)
-{
-	//Setup Current Time for Calendar
-	g.current_time.time.Seconds = 0x00;
-	g.current_time.time.Minutes = 0x00;
-	g.current_time.time.Hours = 0x00;
-	g.current_time.time.DayOfWeek = 0x04;
-	g.current_time.time.DayOfMonth = 0x30;
-	g.current_time.time.Month = 0x04;
-	g.current_time.time.Year = 0x2015;
-	g.current_time.centisecond = 0;
+void reset_rtc_timer(void);
+void init_rtc(void);
 
-	g.last_sample_time = g.current_time;
 
-	RTC_C_initCounter(RTC_C_BASE, RTC_C_CLOCKSELECT_32KHZ_OSC, RTC_C_COUNTERSIZE_16BIT);
-	RTC_C_initCalendar(RTC_C_BASE,
-					   &g.current_time.time,
-					   RTC_C_FORMAT_BINARY);
-}
 /*
  * Main routine
  */
@@ -182,53 +162,45 @@ int main(void) {
     Init_LCD();
     Init_Timer();
     init_uart();
-
-    RTC_C_initCounter(RTC_C_BASE, RTC_C_CLOCKSELECT_32KHZ_OSC, RTC_C_COUNTERSIZE_16BIT);
-                    RTC_C_definePrescaleEvent(RTC_C_BASE, RTC_C_PRESCALE_1, RTC_C_PSEVENTDIVIDER_32);
-                    RTC_C_enableInterrupt(RTC_C_BASE, RTC_C_PRESCALE_TIMER1_INTERRUPT);
-                    RTC_C_startClock(RTC_C_BASE);
-
-
-    // Set RTC modulo to 327-1 to trigger interrupt every ~10 ms
-	RTC_C_holdClock(RTC_C_BASE);
-
-	// Clear stopwatch
-	reset_rtc_timer();
-
-	RTC_C_definePrescaleEvent(RTC_C_BASE, RTC_C_PRESCALE_0, RTC_C_PSEVENTDIVIDER_32);
-	RTC_C_enableInterrupt(RTC_C_BASE, RTC_C_PRESCALE_TIMER0_INTERRUPT | RTC_C_CLOCK_READ_READY_INTERRUPT | RTC_C_TIME_EVENT_INTERRUPT);
-	RTC_C_startCounterPrescale(RTC_C_BASE, RTC_C_PRESCALE_0);
-
-	 RTC_C_startClock(RTC_C_BASE);
-
-
-
-
-
-
-
+    init_rtc();
+    taos_mode_init();
 
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN1);
     GPIO_clearInterrupt(GPIO_PORT_P1, GPIO_PIN2);
 
     __enable_interrupt();
 
-    static char const * const welcome_message = "BIOSENTINEL OPTICS GSE V01";
+    static char const * const welcome_message = "BIOSENTINEL OPTICS GSE V01  PRESS S1 TO START S2 TO STOP";
     displayScrollText((char *)welcome_message);
     printf("%s\r\n",welcome_message);
 
-#if 0
-    Timer_A_initContinuousMode(TIMER_A2_BASE,&initContinuousParam_A2);
-#endif
-    
+    // print out the column headers
+    printf("Days,Hours,Minutes");
+    unsigned char i;
+    for(i=0; i<taos_max_well_number-1; i++)
+	{
+		printf(",%s",taos_translate_well_index(i));
+	}
+    printf("%s\r\n",welcome_message);
+
+	unsigned char last_minute_counter = 0;
+	bool sample_wells = false;
+
     while(1)
     {
+    	if(g.minute_counter != last_minute_counter)
+    	{
+    		g.update_display=true;
+    		last_minute_counter=g.minute_counter;
+    	}
 
     	if(g.update_display)
     	{
     		if(g.running)
     		{
-    			static char const * const run_string = "RUN";
+
+    			sprintf(&sprintf_buffer,"%d MIN",SAMPLE_PERIOD_MINUTES-g.minute_counter);
+    			static char const * const run_string = sprintf_buffer;
     			print_to_lcd(run_string);
     		}
     		else
@@ -239,35 +211,83 @@ int main(void) {
     		g.update_display=false;
     	}
 
-    	g.current_time.time = RTC_C_getCalendarTime(RTC_C_BASE);
-
-    	if(g.running==true && g.current_time.time.Seconds > 5)//if(g.update_display)
+    	if(g.running==true && g.minute_counter == SAMPLE_PERIOD_MINUTES)
     	{
-    		reset_rtc_timer();
-    		 RTC_C_startClock(RTC_C_BASE);
+    		sample_wells = true;
+    		g.minute_counter=0;
+    		g.update_display=true;
+    	}
 
-    		printf("time");
+
+    	if(true == sample_wells)//if(g.update_display)
+    	{
+    		sample_wells = false;
+
+    		Calendar run_time = RTC_C_getCalendarTime(RTC_C_BASE);
+
+    		printf("%d,%d,%d",run_time.DayOfWeek,run_time.Hours,run_time.Minutes);
 
     		taos_set_current_well(0);
     		for(; taos_get_current_well()<taos_max_well_number-1; taos_increment_well() )
     		{
-    			printf(",%d",taos_get_current_well());
 
+    			Timer_A_disableInterrupt(TIMER_A1_BASE);
+
+				DMA_initParam dma_init = {
+						DMA_CHANNEL_0,
+						DMA_TRANSFER_SINGLE,
+						20,
+						DMA_TRIGGERSOURCE_4,
+						DMA_SIZE_SRCWORD_DSTWORD,
+						DMA_TRIGGER_HIGH
+				};
+
+				uint32_t dst_addr = &g.timer.freq_array;
+				DMA_init(&dma_init);
+				DMA_setDstAddress(DMA_CHANNEL_0,dst_addr,DMA_DIRECTION_INCREMENT);
+				DMA_setSrcAddress(DMA_CHANNEL_0,&TA1CCR2,DMA_DIRECTION_UNCHANGED);
+				DMA_setTransferSize(DMA_CHANNEL_0,20);
+				//DMA_enableInterrupt(DMA_CHANNEL_0);
+				DMA_clearInterrupt(DMA_CHANNEL_0);
+
+				taos_output_enable();
+
+
+			    Init_Timer();
 				Timer_A_enableInterrupt(TIMER_A1_BASE);
-				Timer_A_enableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+				Timer_A_clearTimerInterrupt(TIMER_A1_BASE);
+				Timer_A_clear(TIMER_A1_BASE);
+				//Timer_A_enableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
 				Timer_A_startCounter(TIMER_A1_BASE,TIMER_A_CONTINUOUS_MODE);
+				DMA_enableTransfers(DMA_CHANNEL_0);
 
-				while(g.timer.freq_array_index<10)
+				while(DMA_INT_INACTIVE==DMA_getInterruptStatus(DMA_CHANNEL_0) && g.abort==false)//while(g.timer.freq_array_index<20)
 				{
 				}
 
-				unsigned long avg = ((g.timer.overflow + g.timer.freq_array[9]) - g.timer.freq_array[1])>>3;
+				taos_output_disable();
+				g.abort=false;
+				Timer_A_stop(TIMER_A1_BASE);
+				Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+				Timer_A_disableInterrupt(TIMER_A1_BASE);
+				Timer_A_clear(TIMER_A1_BASE);
+				DMA_disableTransfers(DMA_CHANNEL_0);
+				DMA_clearInterrupt(DMA_CHANNEL_0);
 
-				sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
+				unsigned long avg = (((g.timer.overflow * 0x10000)+ g.timer.freq_array[19]) - g.timer.freq_array[3])>>4;
+
+				if(0==avg)
+				{
+					sprintf(sprintf_buffer,"0");
+				}
+				else
+				{
+					sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
+				}
+
 				printf(",%s",sprintf_buffer);
-				print_to_lcd(&sprintf_buffer);
+				//print_to_lcd(&sprintf_buffer);
 
-				g.update_display=false;
 				Timer_A_stop(TIMER_A1_BASE);
 				Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
 				g.timer.overflow=0;
@@ -450,6 +470,32 @@ void print_to_lcd(char string[])
 	}
 }
 
+void reset_rtc_timer(void)
+{
+	volatile Calendar initial_time;
+
+	//Setup Current Time for Calendar
+	initial_time.Seconds = 0x00;
+	initial_time.Minutes = 0x00;
+	initial_time.Hours = 0x00;
+	initial_time.DayOfWeek = 0x00;
+	initial_time.DayOfMonth = 0x01;
+	initial_time.Month = 0x00;
+	initial_time.Year = 0x2015;
+
+	RTC_C_initCalendar(RTC_C_BASE, &initial_time, RTC_C_FORMAT_BINARY);
+}
+
+
+void init_rtc(void)
+{
+	reset_rtc_timer();
+	RTC_C_setCalendarEvent(RTC_C_BASE,RTC_C_CALENDAREVENT_MINUTECHANGE);
+	RTC_C_enableInterrupt(RTC_C_BASE,RTC_C_TIME_EVENT_INTERRUPT);
+	RTC_C_startClock(RTC_C_BASE);
+}
+
+
 /*
  * RTC Interrupt Service Routine
  * Wakes up every ~10 milliseconds to update stowatch
@@ -464,29 +510,24 @@ void RTC_ISR(void)
 {
     switch(__even_in_range(RTCIV, 16))
     {
-    case RTCIV_NONE: break;      //No interrupts
-    case RTCIV_RTCOFIFG: break;      //RTCOFIFG
+    case RTCIV_NONE:
+    	break;      //No interrupts
+    case RTCIV_RTCOFIFG:
+    	break;      //RTCOFIFG
     case RTCIV_RTCRDYIFG:             //RTCRDYIFG
-        g.current_time.counter = RTCPS;
-        g.current_time.centisecond = 0;
-        __bic_SR_register_on_exit(LPM3_bits);
         break;
     case RTCIV_RTCTEVIFG:             //RTCEVIFG
         //Interrupts every minute
-        __no_operation();
+    	g.minute_counter++;
         break;
     case RTCIV_RTCAIFG:             //RTCAIFG
-        __no_operation();
         break;
     case RTCIV_RT0PSIFG:
-        g.current_time.centisecond = RTCPS - g.current_time.counter;
-        __bic_SR_register_on_exit(LPM3_bits);
         break;     //RT0PSIFG
     case RTCIV_RT1PSIFG:
-        __bic_SR_register_on_exit(LPM3_bits);
-        break;     //RT1PSIFG
-
-    default: break;
+    	break;     //RT1PSIFG
+    default:
+    	break;
     }
 }
 
@@ -513,6 +554,7 @@ __interrupt void PORT1_ISR(void)
                 	case DEFAULT_MODE:
 						g.running = true;
 						g.update_display=true;
+						g.minute_counter=SAMPLE_PERIOD_MINUTES;
 						break;
                 }
 
@@ -667,7 +709,7 @@ __interrupt void TA0IV_ISR(void)
 
 		g.timer.freq_array[g.timer.freq_array_index]=TA1CCR2;
 		g.timer.freq_array_index++;
-		if (g.timer.freq_array_index==10)
+		if (g.timer.freq_array_index==20)
 		{
 			Timer_A_stop(TIMER_A1_BASE);
 			Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
@@ -680,20 +722,27 @@ __interrupt void TA0IV_ISR(void)
 	//if(Timer_A_getCaptureCompareInterruptStatus(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2,TIMER_A_CAPTURE_OVERFLOW))
 	if(TA1IV_save == 0x0E)
 	{
-		if(g.timer.freq_array_index>1){
-			g.timer.overflow += 0x10000;
+		//if(g.timer.freq_array_index>=3){
+		if(DMA0SZ<=16){
+			g.timer.overflow ++;
+			if(g.timer.overflow > 1000)
+			{
+				int i;
+				for(i=0;i<20;i++)
+				{
+					g.timer.freq_array[i]=0;
+				}
+				g.timer.overflow=0;
+				g.timer.freq_array_index=20;
+				g.abort = true;
+				Timer_A_stop(TIMER_A1_BASE);
+				Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+				Timer_A_disableInterrupt(TIMER_A1_BASE);
+				Timer_A_clear(TIMER_A1_BASE);
+			}
 		}
 	}
 }
 
-#if 0
-#pragma vector=TIMER2_A1_VECTOR
-__interrupt void TIMER2_A0_ISR (void)
-{
-	if(TA2IV== 0x0E)
-	{
-		g.update_display=true;
-	}
-}
-#endif
+
 

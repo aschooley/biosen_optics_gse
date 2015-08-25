@@ -26,11 +26,21 @@ static void update_screen(void);
 void taos_increment_well(void){
 	g.well_index++;
 	g.well_index %= taos_max_well_number;
+
+	uint16_t p9out_save = P9OUT;
+	p9out_save &= ~0x3F;
+	p9out_save |= g.well_index;
+	P9OUT = p9out_save;
 	return;
 }
-void taosdecrement_well(void){
+void taos_decrement_well(void){
 	g.well_index--;
 	g.well_index %= taos_max_well_number;
+
+	uint16_t p9out_save = P9OUT;
+	p9out_save &= ~0x3F;
+	p9out_save |= g.well_index;
+	P9OUT = p9out_save;
 	return;
 }
 
@@ -53,9 +63,16 @@ bool taos_set_current_well(unsigned char index)
 	return success;
 
 }
+void taos_output_enable(void){
+	GPIO_setOutputHighOnPin(GPIO_PORT_P9, GPIO_PIN6);
+}
+void taos_output_disable(void){
+	GPIO_setOutputLowOnPin(GPIO_PORT_P9, GPIO_PIN6);
+}
 
 void taos_mode_init(void){
-	return;
+	GPIO_setOutputLowOnPin(GPIO_PORT_P9, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6);
+	GPIO_setAsOutputPin(GPIO_PORT_P9, GPIO_PIN0|GPIO_PIN1|GPIO_PIN2|GPIO_PIN3|GPIO_PIN4|GPIO_PIN5|GPIO_PIN6);
 }
 void taos_mode(void){
 
