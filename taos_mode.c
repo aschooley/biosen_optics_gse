@@ -22,25 +22,27 @@ static struct
 
 static void update_screen(void);
 
-
-void taos_increment_well(void){
-	g.well_index++;
-	g.well_index %= taos_max_well_number;
-
+void set_address_lines(void)
+{
 	uint16_t p9out_save = P9OUT;
 	p9out_save &= ~0x3F;
 	p9out_save |= g.well_index;
 	P9OUT = p9out_save;
+}
+void taos_increment_well(void){
+	g.well_index++;
+	g.well_index %= taos_max_well_number;
+
+	set_address_lines();
+
 	return;
 }
 void taos_decrement_well(void){
 	g.well_index--;
 	g.well_index %= taos_max_well_number;
 
-	uint16_t p9out_save = P9OUT;
-	p9out_save &= ~0x3F;
-	p9out_save |= g.well_index;
-	P9OUT = p9out_save;
+	set_address_lines();
+
 	return;
 }
 
@@ -57,6 +59,8 @@ bool taos_set_current_well(unsigned char index)
 	if(0 <= index && taos_max_well_number > index)
 	{
 		g.well_index = index;
+
+		set_address_lines();
 		success = true;
 	}
 

@@ -81,6 +81,7 @@ static struct {
 	volatile bool update_display;
 	volatile unsigned char minute_counter;
 	volatile bool abort;
+	volatile unsigned int zero_hz_timeout;
 }g={false,DEFAULT_MODE,{false,false,0},{0,false,{}},false,0,false};
 
 
@@ -228,7 +229,7 @@ int main(void) {
     		printf("%d,%d,%d",run_time.DayOfWeek,run_time.Hours,run_time.Minutes);
 
     		taos_set_current_well(0);
-    		for(; taos_get_current_well()<taos_max_well_number-1; taos_increment_well() )
+    		while(taos_get_current_well()<taos_max_well_number-1)
     		{
 
     			Timer_A_disableInterrupt(TIMER_A1_BASE);
@@ -266,6 +267,7 @@ int main(void) {
 				}
 
 				taos_output_disable();
+				taos_increment_well();
 				g.abort=false;
 				Timer_A_stop(TIMER_A1_BASE);
 				Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
@@ -291,6 +293,7 @@ int main(void) {
 				Timer_A_stop(TIMER_A1_BASE);
 				Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
 				g.timer.overflow=0;
+				g.zero_hz_timeout=0;
 				g.timer.freq_array_index=0;
     		}
     		printf("\r\n");
@@ -390,7 +393,7 @@ void Init_Timer(void)
  */
 void init_uart(void)
 {
-	EUSCI_A_UART_initParam uart_a1_param={
+	EUSCI_A_UART_initParam uart_a0_param={
 			EUSCI_A_UART_CLOCKSOURCE_ACLK,
 			3,
 			0,
@@ -402,31 +405,31 @@ void init_uart(void)
 			EUSCI_A_UART_LOW_FREQUENCY_BAUDRATE_GENERATION
 	};
 
-	GPIO_setAsInputPin(GPIO_PORT_P3, GPIO_PIN5);//AJS
-	GPIO_setOutputHighOnPin(GPIO_PORT_P3,GPIO_PIN4);
-	GPIO_setAsOutputPin(GPIO_PORT_P3,GPIO_PIN4);
+	GPIO_setAsInputPin(GPIO_PORT_P4, GPIO_PIN3);//AJS
+	GPIO_setOutputHighOnPin(GPIO_PORT_P4,GPIO_PIN2);
+	GPIO_setAsOutputPin(GPIO_PORT_P4,GPIO_PIN2);
 
 	GPIO_setAsPeripheralModuleFunctionInputPin(
-			GPIO_PORT_P3,
-			GPIO_PIN5,
+			GPIO_PORT_P4,
+			GPIO_PIN3,
 			GPIO_PRIMARY_MODULE_FUNCTION
 			);
 	GPIO_setAsPeripheralModuleFunctionOutputPin(
-			GPIO_PORT_P3,
-			GPIO_PIN4,
+			GPIO_PORT_P4,
+			GPIO_PIN2,
 			GPIO_PRIMARY_MODULE_FUNCTION
 			);
 
-	EUSCI_A_UART_init(EUSCI_A1_BASE,&uart_a1_param);
-	EUSCI_A_UART_enable(EUSCI_A1_BASE);
+	EUSCI_A_UART_init(EUSCI_A0_BASE,&uart_a0_param);
+	EUSCI_A_UART_enable(EUSCI_A0_BASE);
 }
 
 int fputc(int _c, register FILE *_fp)
 {
 	// Wait for peripherial to be available
-	while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A1_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
+	while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A0_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
 	// Stuff byte into tx reg
-	EUSCI_A_UART_transmitData(EUSCI_A1_BASE,_c);//UCA1TXBUF = (unsigned char) _c;
+	EUSCI_A_UART_transmitData(EUSCI_A0_BASE,_c);//UCA1TXBUF = (unsigned char) _c;
 	// Return tx'd byte, for giggles I suppose
 	return((unsigned char)_c);
 }
@@ -443,9 +446,9 @@ int fputs(const char *_ptr, register FILE *_fp)
 	for(i=0 ; i<len ; i++)
 	{
 		// Wait for the peripherial to be available
-		while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A1_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
+		while (!EUSCI_A_UART_getInterruptStatus(EUSCI_A0_BASE,EUSCI_A_UART_TRANSMIT_INTERRUPT_FLAG));//while(!(UCA1IFG&UCTXIFG));
 		// Stuff byte into the tx reg
-		EUSCI_A_UART_transmitData(EUSCI_A1_BASE,_ptr[i]);//UCA1TXBUF = (unsigned char) _ptr[i];
+		EUSCI_A_UART_transmitData(EUSCI_A0_BASE,_ptr[i]);//UCA1TXBUF = (unsigned char) _ptr[i];
 	}
 
 	// Return the number of bytes sent
@@ -722,6 +725,24 @@ __interrupt void TA0IV_ISR(void)
 	//if(Timer_A_getCaptureCompareInterruptStatus(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2,TIMER_A_CAPTURE_OVERFLOW))
 	if(TA1IV_save == 0x0E)
 	{
+		g.zero_hz_timeout++;
+		if(g.zero_hz_timeout > 2000)
+		{
+			int i;
+			for(i=0;i<20;i++)
+			{
+				g.timer.freq_array[i]=0;
+			}
+		g.timer.overflow=0;
+		g.zero_hz_timeout=0;
+		g.timer.freq_array_index=20;
+		g.abort = true;
+		Timer_A_stop(TIMER_A1_BASE);
+		Timer_A_disableCaptureCompareInterrupt(TIMER_A1_BASE,TIMER_A_CAPTURECOMPARE_REGISTER_2);
+		Timer_A_disableInterrupt(TIMER_A1_BASE);
+		Timer_A_clear(TIMER_A1_BASE);
+		}
+
 		//if(g.timer.freq_array_index>=3){
 		if(DMA0SZ<=16){
 			g.timer.overflow ++;
@@ -733,6 +754,7 @@ __interrupt void TA0IV_ISR(void)
 					g.timer.freq_array[i]=0;
 				}
 				g.timer.overflow=0;
+				g.zero_hz_timeout=0;
 				g.timer.freq_array_index=20;
 				g.abort = true;
 				Timer_A_stop(TIMER_A1_BASE);
