@@ -276,15 +276,17 @@ int main(void) {
 				DMA_disableTransfers(DMA_CHANNEL_0);
 				DMA_clearInterrupt(DMA_CHANNEL_0);
 
-				unsigned long avg = (((g.timer.overflow * 0x10000)+ g.timer.freq_array[19]) - g.timer.freq_array[3])>>4;
+				//unsigned long avg = (((g.timer.overflow * 0x10000)+ g.timer.freq_array[19]) - g.timer.freq_array[3])>>4;
+				unsigned long total = ((g.timer.overflow * 0x10000)+ g.timer.freq_array[19]) - g.timer.freq_array[3];
 
-				if(0==avg)
+				if(total==0)//if(0==avg)
 				{
 					sprintf(sprintf_buffer,"0");
 				}
 				else
 				{
-					sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
+					//sprintf(sprintf_buffer,"%f",8000000.0/(double)avg);
+					sprintf(sprintf_buffer,"%lu",total);
 				}
 
 				printf(",%s",sprintf_buffer);
